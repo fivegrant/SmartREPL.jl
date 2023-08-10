@@ -12,44 +12,34 @@ end
 
 
 """
-  request_generate(provider::OpenAIProvider, text::String)  
-
-Generate code using OpenAI API
-"""
-function request_generate(provider::OpenAIProvider, text::String)
-  if ismissing(OPENAI_API_KEY) throw("No OpenAI key provided.") end
-  completions = joinpath(OPENAI_API, "chat/completions")
-  headers = ["Content-Type" => "application/json", "Authorization" => "Bearer " * OPENAI_API_KEY]
-  request = Dict(
-    "model" => provider.model,
-    "messages" => [
-      Dict("role" => "system", "content" => generate_prompt)
-      Dict("role"=> "user", "content"=> text)
-    ],
-    "temperature" => provider.temperature
-  ) |> JSON.write
-  # TODO: CATCH HTTP.Exceptions.StatusError(400
-  response = HTTP.post(completions, headers, request).body |> JSON.read
-  response.choices[1].message.content
-end
-
-"""
-  ask(provider::OpenAIProvider, text::String)::String
+  step_llm(context::QueryContext, provider::OpenAIProvider)::String
 
 Send query to OpenAI (cost incurred for each use)  
 """
-function ask(provider::OpenAIProvider, text::String)
+function step_llm!(context::QueryContext, provider::OpenAIProvider)
   if ismissing(OPENAI_API_KEY) throw("No OpenAI key provided.") end
+
+  currentstate = context.states[end].action
+  messages = [
+      Dict("role" => "system", "content" => systemprompt(currentstate)),
+      Dict("role" => "user", "content"=> context.query)
+  ]  
+
   completions = joinpath(OPENAI_API, "chat/completions")
   headers = ["Content-Type" => "application/json", "Authorization" => "Bearer " * OPENAI_API_KEY]
   request = Dict(
     "model" => provider.model,
-    "messages" => [
-      Dict("role"=> "user", "content"=> text)
-    ],
+    "messages" => messages,
     "temperature" => provider.temperature
   ) |> JSON.write
+
   # TODO: CATCH HTTP.Exceptions.StatusError(400
   response = HTTP.post(completions, headers, request).body |> JSON.read
-  response.choices[1].message.content
+  context.states[end].result = response.choices[1].message.content
+  if currentstate == pick 
+    picked = string(strip(context.states[end].result))
+    context.states[end].result = picked 
+    push!(context.states, ActionState(picked))
+  end
+  context
 end

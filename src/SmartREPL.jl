@@ -1,26 +1,41 @@
 module SmartREPL
 
-import REPL.TerminalMenus: request, RadioMenu
-import ReplMaker: initrepl, enter_mode!
+using Base: prompt
+import ReplMaker: initrepl
 import TOML: parsefile
 import HTTP
 import JSON3 as JSON
 import Markdown
-import MLStyle: @match
-import REPL.LineEdit: refresh_line
+import MLStyle: @match, @data
 
 # TODO: Allow configuration location to be more flexible
 CONFIG_FILE = parsefile(joinpath(homedir(), ".smartrepl.toml"))
+
 abstract type Provider end
 
-"""
-  request_generate(provider, text::String)  
+# TODO: Fix the case on these
+@data Action begin 
+    pick 
+    code 
+    explain 
+end
 
-Generate raw code 
-"""
-function request_generate end
+pick_prompt = """
+    You are a picking mechanism given two options: 'code' and 'explain'.
+    You will be given some kind of natural language query and you will
+    try to pick if the 'code' or 'explain' tools to apply.
 
-generate_prompt = """
+    `code`: This tool transforms natural language into Julia code.
+    This is probably used most of the time.
+
+    `explain`: This tool is a catcahll for queries that wouldn't
+    fit code.
+
+    ONLY respond with a single word 'code' or 'explain' without
+    punctuation or ANY additional words.
+"""
+
+code_prompt = """
     You are a Julia code generator. You will receive a query by
     a user working in the REPL. You will respond to this query
     with a code that is ready to paste in the REPL. You will NOT
@@ -28,31 +43,44 @@ generate_prompt = """
     be put in a Julia comment, however, comments should be minimal
 """
 
+explain_prompt = """
+    You are a general assistant embedded in a Julia REPL. 
+    You will receive a question by the user, probably related to
+    Julia.
 """
-  generate!(provider, text::String)  
 
-Generate code to prefill next prompt
-"""
-function generate!(provider, text) 
-    code = "apples = 'h'" #request_generate(provider, text)
-    if !isdefined(Base, :active_repl) return code end
-    repl = Base.active_repl
-    mistate = repl.mistate
-    normalmode = mistate.interface.modes[1] # Is this always correct?
-    enter_mode!(mistate, normalmode)
-    state = mistate.mode_state[normalmode]
-    state.input_buffer = IOBuffer(code)
-    refresh_line(mistate)
-    nothing
+systemprompt(action::Action) = @match action begin
+    pick => pick_prompt
+    code => code_prompt
+    explain => explain_prompt
 end
 
+liftaction(str::String)::Action = @match str begin
+    "pick" => pick
+    "code" => code
+    "explain" => explain
+    _ => throw("'{str}' does not parse to action")
+end
+
+mutable struct ActionState
+    action::Action
+    result::Union{String, Nothing}
+    ActionState(action::Action,  result::Union{String, Nothing}=nothing) = new(action, result)
+    ActionState(action::String,  result::Union{String, Nothing}=nothing) = new(liftaction(action), result)
+end
+
+mutable struct QueryContext
+    query::String
+    states::Vector{ActionState}
+    QueryContext(query::String, states::Vector{ActionState}=[ActionState(pick)]) = new(query, states)
+end
 
 """
-  ask(provider, text::String)::String  
+  step_llm!(context::QueryContext, provider)::String  
 
-Send one-off query to LLM and get a response
+Make LLM-specific call
 """
-function ask end
+function step_llm! end
 
 # TODO: Include more providers
 include("./openai.jl")
@@ -60,20 +88,13 @@ include("./openai.jl")
 PROVIDER = OpenAIProvider()
 
 function llmquery(input)
-    choices = [
-        "generate",
-        "ask",
-        "solve",
-    ]
-    chosen = request("Select operation", RadioMenu(choices))
-    @match chosen begin
-        1 => generate!(PROVIDER, input)
-        2 => ask(PROVIDER, input) 
-        3 => ""
-    end
+    context = QueryContext(input)
+    # TODO: Make this into a full blown 'agent'
+    context = step_llm!(context, PROVIDER) # Run pick
+    context = step_llm!(context, PROVIDER) # Run chosen operation
+    context.states[end].result
 end
 
-mode_response(_, _, ::Nothing) = nothing
 mode_response(_, _, llm_response::AbstractString) = (display ∘ Markdown.parse)(llm_response)
 
 
