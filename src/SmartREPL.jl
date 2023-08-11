@@ -1,15 +1,16 @@
 module SmartREPL
 
-using Base: prompt
 import ReplMaker: initrepl
 import TOML: parsefile
 import HTTP
 import JSON3 as JSON
 import Markdown
 import MLStyle: @match, @data
+import Mocking: Mocking, @mock
 
 # TODO: Allow configuration location to be more flexible
 CONFIG_FILE = parsefile(joinpath(homedir(), ".smartrepl.toml"))
+active() = isdefined(Base, :active_repl)
 
 abstract type Provider end
 
@@ -108,6 +109,6 @@ function register_mode()
     )
 end
 
-__init__ = register_mode
+__init__() = active() ? register_mode() : nothing
 
 end # module SmartREPL

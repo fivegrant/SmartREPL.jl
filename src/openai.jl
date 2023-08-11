@@ -34,8 +34,9 @@ function step_llm!(context::QueryContext, provider::OpenAIProvider)
   ) |> JSON.write
 
   # TODO: CATCH HTTP.Exceptions.StatusError(400
-  response = HTTP.post(completions, headers, request).body |> JSON.read
-  context.states[end].result = response.choices[1].message.content
+  response = @mock HTTP.post(completions, headers, request)
+  body = response.body |> JSON.read
+  context.states[end].result = body.choices[1].message.content
   if currentstate == pick 
     picked = string(strip(context.states[end].result))
     context.states[end].result = picked 
